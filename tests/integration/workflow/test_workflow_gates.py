@@ -37,8 +37,14 @@ def material(*, conflict: ConflictRecord | None = None, not_found: tuple[str, ..
     return change_set, proposal, create_artifact_snapshot(proposal)
 
 
-def evidence(artifact: object, decision: ReviewDecision = ReviewDecision.APPROVED) -> ReviewEvidence:
+def evidence(
+    artifact: object,
+    decision: ReviewDecision = ReviewDecision.APPROVED,
+    run_id: str = "run-1",
+) -> ReviewEvidence:
     return ReviewEvidence(
+        run_id=run_id,
+        change_set_id=artifact.change_set_id,
         reviewer_identity="reviewer-1",
         decision=decision,
         decided_at=datetime(2026, 9, 15, tzinfo=timezone.utc),
@@ -49,7 +55,7 @@ def evidence(artifact: object, decision: ReviewDecision = ReviewDecision.APPROVE
     )
 
 
-def awaiting_review(orchestrator: SyncOrchestrator, run_id: str = "run-1") -> None:
+def awaiting_review(orchestrator: SyncOrchestrator, change_set_id: str, run_id: str = "run-1") -> None:
     orchestrator.start_run(run_id, source_version_id="source-v2")
     for state in (
         SyncState.PARSED,
@@ -58,20 +64,27 @@ def awaiting_review(orchestrator: SyncOrchestrator, run_id: str = "run-1") -> No
         SyncState.PROPOSED,
         SyncState.AWAITING_REVIEW,
     ):
-        orchestrator.transition(run_id, state)
+        if state is SyncState.PROPOSED:
+            orchestrator.transition(run_id, state, change_set_id=change_set_id)
+        else:
+            orchestrator.transition(run_id, state)
 
 
 def test_approval_bypass_and_invalid_hash_are_denied():
     change_set, proposal, artifact = material()
     orchestrator = SyncOrchestrator()
-    awaiting_review(orchestrator)
-    service = ReviewService(orchestrator)
-    service.present(change_set, proposal, artifact)
+    awaiting_review(orchestrator, change_set.change_set_id)
+    service = ReviewService(orchestrator, reviewer_authorizer=lambda _: False)
+    service.present("run-1", change_set, proposal, artifact)
 
     with pytest.raises(PermissionError):
-        service.submit("run-1", evidence(artifact), reviewer_authorized=False, artifact=artifact)
+        service.submit("run-1", evidence(artifact), artifact=artifact)
 
+    service = ReviewService(orchestrator, reviewer_authorizer=lambda _: True)
+    service.present("run-1", change_set, proposal, artifact)
     invalid = ReviewEvidence(
+        run_id="run-1",
+        change_set_id=artifact.change_set_id,
         reviewer_identity="reviewer-1",
         decision=ReviewDecision.APPROVED,
         decided_at=datetime(2026, 9, 15, tzinfo=timezone.utc),
@@ -81,7 +94,7 @@ def test_approval_bypass_and_invalid_hash_are_denied():
         artifact_hash="wrong-hash",
     )
     with pytest.raises(ValueError, match="artifact hash"):
-        service.submit("run-1", invalid, reviewer_authorized=True, artifact=artifact)
+        service.submit("run-1", invalid, artifact=artifact)
 
 
 def test_unresolved_change_blocks_workflow_approval():
@@ -94,18 +107,18 @@ def test_unresolved_change_blocks_workflow_approval():
     )
     change_set, proposal, artifact = material(conflict=conflict, not_found=("payment evidence",))
     orchestrator = SyncOrchestrator()
-    awaiting_review(orchestrator)
-    service = ReviewService(orchestrator)
-    service.present(change_set, proposal, artifact)
+    awaiting_review(orchestrator, change_set.change_set_id)
+    service = ReviewService(orchestrator, reviewer_authorizer=lambda _: True)
+    service.present("run-1", change_set, proposal, artifact)
 
     with pytest.raises(ApprovalBlockedError):
-        service.submit("run-1", evidence(artifact), reviewer_authorized=True, artifact=artifact)
+        service.submit("run-1", evidence(artifact), artifact=artifact)
     assert orchestrator.resume("run-1").state is SyncState.AWAITING_REVIEW
 
 
 def test_resume_and_duplicate_run_protection_work_across_orchestrator_instances():
     orchestrator = SyncOrchestrator()
-    awaiting_review(orchestrator)
+    awaiting_review(orchestrator, "change-set-1")
     resumed = SyncOrchestrator(orchestrator.repository).resume("run-1")
 
     assert resumed.state is SyncState.AWAITING_REVIEW

@@ -33,8 +33,13 @@ class CheckpointRepository:
     def replace(self, checkpoint: SyncCheckpoint) -> None:
         if self.get(checkpoint.run_id) is None:
             raise KeyError(checkpoint.run_id)
-        self._records._records[checkpoint.run_id] = checkpoint
-        self._history[checkpoint.run_id].append(checkpoint)
+        history = self._history[checkpoint.run_id]
+        history.append(checkpoint)
+        try:
+            self._records._records[checkpoint.run_id] = checkpoint
+        except BaseException:
+            history.pop()
+            raise
 
     def history(self, run_id: str) -> tuple[SyncCheckpoint, ...]:
         if run_id not in self._history:

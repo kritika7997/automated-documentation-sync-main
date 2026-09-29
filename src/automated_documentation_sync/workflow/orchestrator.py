@@ -65,6 +65,9 @@ class SyncOrchestrator:
         return self._transition(run_id, SyncState.APPROVED, artifact_hash=artifact_hash)
 
     def _publish_after_confirmation(self, run_id: str, *, artifact_hash: str) -> SyncCheckpoint:
+        checkpoint = self.resume(run_id)
+        if checkpoint.artifact_hash is None or checkpoint.artifact_hash != artifact_hash:
+            raise ValueError("Publication artifact hash must match the approved artifact")
         return self._transition(run_id, SyncState.PUBLISHED, artifact_hash=artifact_hash)
 
     def resume(self, run_id: str) -> SyncCheckpoint:

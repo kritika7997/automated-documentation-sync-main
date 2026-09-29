@@ -66,3 +66,27 @@ def test_renderer_preserves_empty_unresolved_sections_without_invention():
     assert "## Conflicts\nNone." in proposal.content
     assert "## Not Found\nNone." in proposal.content
     assert "## Out of Scope\nNone." in proposal.content
+
+
+def test_renderer_escapes_source_text_that_could_change_markdown_structure():
+    change = PolicyChange(
+        change_type=ChangeType.MODIFIED,
+        category="threshold\n# Injected heading",
+        old_value="6 hours",
+        new_value="[click](javascript:alert(1))",
+        source_locations=(SourceLocation("source-v2", "Policy", "paragraph:1"),),
+        classification=Classification.SOURCE_POLICY,
+    )
+    change_set = build_change_set(
+        source_version_id="source-v2",
+        clarification_version="clarifications-v1",
+        requirements_version="requirements-v1",
+        configuration_snapshot={},
+        changes=(change,),
+    )
+
+    proposal = render_proposal(change_set)
+
+    assert "### Change 1: threshold \\# Injected heading" in proposal.content
+    assert "\n# Injected heading" not in proposal.content
+    assert "New value: `'[click](javascript:alert(1))'`" in proposal.content

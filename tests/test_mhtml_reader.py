@@ -1,5 +1,7 @@
 from email.message import EmailMessage
 
+import pytest
+
 from automated_documentation_sync.ingestion import (
     RepositoryDocument,
     extract_source_package,
@@ -58,6 +60,19 @@ def test_non_multipart_html_is_preserved_without_attachments():
     assert parsed.html_content == content
     assert parsed.resources == ()
     assert parsed.unresolved_references == ()
+
+
+def test_unsupported_media_type_is_rejected():
+    with pytest.raises(ValueError, match="Unsupported or missing policy document media type: text/plain"):
+        read_source_document(make_document(b"policy text", "text/plain"))
+
+
+def test_html_media_type_parameters_are_accepted():
+    content = b"<html><body>policy</body></html>"
+    parsed = read_source_document(make_document(content, "Text/HTML; charset=utf-8"))
+
+    assert parsed.html_content == content
+    assert parsed.html_media_type == "text/html"
 
 
 def test_source_package_retains_original_document_and_attachments():

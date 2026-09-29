@@ -62,6 +62,18 @@ def test_malformed_package_is_rejected_without_document_update():
     assert result.checkpoint.state == SYNC_FAILED
 
 
+def test_unsupported_media_type_fails_closed():
+    result = validate_document_for_sync(
+        make_document(b"policy text", media_type="text/plain"),
+        run_id="run-unsupported-media",
+    )
+
+    assert result.is_valid is False
+    assert result.documentation_update_allowed is False
+    assert result.checkpoint.state == SYNC_FAILED
+    assert "Unsupported or missing policy document media type" in result.reason
+
+
 def test_checkpoint_records_original_bytes_for_audit():
     document = make_document(b"<html><body>policy</body></html>")
     result = validate_document_for_sync(document, run_id="audit-run")

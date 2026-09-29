@@ -7,6 +7,8 @@ from typing import Iterable
 
 from .contracts import RepositoryDocument
 
+SUPPORTED_MEDIA_TYPES = frozenset({"message/rfc822", "multipart/related", "text/html"})
+
 
 @dataclass(frozen=True)
 class EmbeddedResource:
@@ -86,13 +88,17 @@ def _unresolved_references(html_content: bytes, resources: tuple[EmbeddedResourc
 def read_source_document(document: RepositoryDocument) -> ParsedSourceDocument:
     """Decode a raw repository document without validating policy semantics."""
     raw_content = document.content
-    if document.media_type in {"multipart/related", "message/rfc822"} or b"boundary=" in raw_content[:4096].lower():
+    media_type = (document.media_type or "").split(";", 1)[0].strip().lower()
+    if media_type not in SUPPORTED_MEDIA_TYPES:
+        reported_type = media_type or "Not Found"
+        raise ValueError(f"Unsupported or missing policy document media type: {reported_type}")
+    if media_type in {"multipart/related", "message/rfc822"} or b"boundary=" in raw_content[:4096].lower():
         message = BytesParser(policy=policy.default).parsebytes(raw_content)
     else:
         return ParsedSourceDocument(
             raw_content=raw_content,
             html_content=raw_content,
-            html_media_type=document.media_type or "text/html",
+            html_media_type=media_type,
             resources=(),
             unresolved_references=(),
         )

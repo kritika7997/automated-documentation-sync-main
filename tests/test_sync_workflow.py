@@ -37,6 +37,27 @@ def test_direct_approval_and_publication_transitions_are_blocked():
         orchestrator.transition("run-controlled", SyncState.PUBLISHED)
 
 
+def test_publication_rejects_hash_different_from_approved_artifact():
+    orchestrator = SyncOrchestrator()
+    orchestrator.start_run("run-publish-hash", source_version_id="source-v1")
+    for state in (
+        SyncState.PARSED,
+        SyncState.VERSIONED,
+        SyncState.CHANGE_DETECTED,
+        SyncState.PROPOSED,
+        SyncState.AWAITING_REVIEW,
+    ):
+        orchestrator.transition("run-publish-hash", state, change_set_id="change-set-1")
+    orchestrator._approve_after_review("run-publish-hash", artifact_hash="approved-hash")
+
+    with pytest.raises(ValueError, match="must match the approved artifact"):
+        orchestrator._publish_after_confirmation("run-publish-hash", artifact_hash="different-hash")
+
+    checkpoint = orchestrator.resume("run-publish-hash")
+    assert checkpoint.state is SyncState.APPROVED
+    assert checkpoint.artifact_hash == "approved-hash"
+
+
 def test_checkpoint_history_retains_each_transition():
     orchestrator = SyncOrchestrator()
     orchestrator.start_run("run-history")
@@ -45,6 +66,28 @@ def test_checkpoint_history_retains_each_transition():
     history = orchestrator.repository.history("run-history")
 
     assert tuple(checkpoint.state for checkpoint in history) == (SyncState.INGESTED, SyncState.PARSED)
+
+
+def test_checkpoint_replace_rolls_back_history_when_current_record_update_fails():
+    class FailingRecordMap(dict):
+        def __setitem__(self, key, value):
+            raise RuntimeError("checkpoint write failed")
+
+    repository = CheckpointRepository()
+    orchestrator = SyncOrchestrator(repository)
+    initial = orchestrator.start_run("run-atomic", source_version_id="source-v1")
+    repository._records._records = FailingRecordMap(repository._records._records)
+    replacement = initial.__class__(
+        run_id=initial.run_id,
+        state=SyncState.PARSED,
+        source_version_id=initial.source_version_id,
+    )
+
+    with pytest.raises(RuntimeError, match="checkpoint write failed"):
+        repository.replace(replacement)
+
+    assert repository.get("run-atomic") == initial
+    assert repository.history("run-atomic") == (initial,)
 
 
 def test_sync_workflow_rejects_invalid_transitions_and_duplicate_runs():

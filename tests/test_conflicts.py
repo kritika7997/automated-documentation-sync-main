@@ -1,4 +1,6 @@
-from automated_documentation_sync.changes.confidence import assess_change_confidence
+import pytest
+
+from automated_documentation_sync.changes.confidence import ConfidenceAssessment, assess_change_confidence
 from automated_documentation_sync.changes.conflicts import (
     ConflictKind,
     ReviewOutcome,
@@ -77,3 +79,23 @@ def test_low_confidence_change_is_held_for_human_review():
 
     assert assessment.requires_human_review is True
     assert assessment.can_finalize is False
+
+
+def test_confidence_assessment_rejects_flags_inconsistent_with_score():
+    change = PolicyChange(
+        change_type=ChangeType.MODIFIED,
+        category="threshold",
+        old_value="6 hours",
+        new_value="9 hours",
+        source_locations=(SourceLocation("v1", "Policy", "threshold"),),
+        classification=Classification.SOURCE_POLICY,
+    )
+
+    with pytest.raises(ValueError, match="flags must match"):
+        ConfidenceAssessment(
+            change=change,
+            score=0.2,
+            threshold=0.8,
+            requires_human_review=False,
+            can_finalize=True,
+        )

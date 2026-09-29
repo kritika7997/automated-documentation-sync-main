@@ -41,7 +41,7 @@ def proposal_material(*, conflict: ConflictRecord | None = None, not_found: tupl
     return change_set, proposal, create_artifact_snapshot(proposal)
 
 
-def advance_to_review(orchestrator: SyncOrchestrator) -> None:
+def advance_to_review(orchestrator: SyncOrchestrator, change_set_id: str) -> None:
     orchestrator.start_run("e2e-run", source_version_id="source-v2")
     for state in (
         SyncState.PARSED,
@@ -50,11 +50,20 @@ def advance_to_review(orchestrator: SyncOrchestrator) -> None:
         SyncState.PROPOSED,
         SyncState.AWAITING_REVIEW,
     ):
-        orchestrator.transition("e2e-run", state)
+        if state is SyncState.PROPOSED:
+            orchestrator.transition("e2e-run", state, change_set_id=change_set_id)
+        else:
+            orchestrator.transition("e2e-run", state)
 
 
-def evidence(artifact, decision: ReviewDecision = ReviewDecision.APPROVED) -> ReviewEvidence:
+def evidence(
+    artifact,
+    decision: ReviewDecision = ReviewDecision.APPROVED,
+    run_id: str = "e2e-run",
+) -> ReviewEvidence:
     return ReviewEvidence(
+        run_id=run_id,
+        change_set_id=artifact.change_set_id,
         reviewer_identity="e2e-reviewer",
         decision=decision,
         decided_at=datetime(2026, 9, 15, tzinfo=timezone.utc),
@@ -68,13 +77,12 @@ def evidence(artifact, decision: ReviewDecision = ReviewDecision.APPROVED) -> Re
 def test_happy_path_reaches_published_only_after_review_and_fake_publication():
     change_set, proposal, artifact = proposal_material(not_found=("payment confirmation evidence",))
     orchestrator = SyncOrchestrator()
-    advance_to_review(orchestrator)
-    review = ReviewService(orchestrator)
-    review.present(change_set, proposal, artifact)
+    advance_to_review(orchestrator, change_set.change_set_id)
+    review = ReviewService(orchestrator, reviewer_authorizer=lambda _: True)
+    review.present("e2e-run", change_set, proposal, artifact)
     review.submit(
         "e2e-run",
         evidence(artifact),
-        reviewer_authorized=True,
         artifact=artifact,
         not_found_outcomes={"payment confirmation evidence": ReviewOutcome.RETURNED},
     )
@@ -115,12 +123,12 @@ def test_conflict_blocks_approval_and_publication_failure_does_not_publish():
     )
     change_set, proposal, artifact = proposal_material(conflict=conflict)
     orchestrator = SyncOrchestrator()
-    advance_to_review(orchestrator)
-    review = ReviewService(orchestrator)
-    review.present(change_set, proposal, artifact)
+    advance_to_review(orchestrator, change_set.change_set_id)
+    review = ReviewService(orchestrator, reviewer_authorizer=lambda _: True)
+    review.present("e2e-run", change_set, proposal, artifact)
 
     with pytest.raises(ApprovalBlockedError):
-        review.submit("e2e-run", evidence(artifact), reviewer_authorized=True, artifact=artifact)
+        review.submit("e2e-run", evidence(artifact), artifact=artifact)
 
     publication = FakePublicationRepository()
     with pytest.raises(PermissionError):

@@ -13,6 +13,7 @@ class ApprovalGateResult:
     can_approve: bool
     unresolved_conflict_ids: tuple[str, ...]
     low_confidence_categories: tuple[str, ...]
+    unassessed_change_categories: tuple[str, ...]
     unresolved_not_found_items: tuple[str, ...]
 
 
@@ -38,6 +39,11 @@ def evaluate_approval_gate(
         raise InvalidReviewOutcomeError(
             f"Unsupported review outcomes for: {', '.join(invalid_outcomes)}"
         )
+    unassessed_changes = list(change_set.changes)
+    for assessment in confidence_assessments:
+        if assessment.change not in unassessed_changes:
+            raise ValueError("Confidence assessment does not belong to the change set")
+        unassessed_changes.remove(assessment.change)
     unresolved_conflicts = tuple(
         conflict.conflict_id
         for conflict in change_set.conflicts
@@ -48,15 +54,19 @@ def evaluate_approval_gate(
         for assessment in confidence_assessments
         if assessment.requires_human_review and not assessment.can_finalize
     )
+    unassessed_categories = tuple(change.category for change in unassessed_changes)
     unresolved_not_found = tuple(
         item
         for item in change_set.not_found_items
         if outcomes.get(item) is None
     )
     return ApprovalGateResult(
-        can_approve=not (unresolved_conflicts or low_confidence or unresolved_not_found),
+        can_approve=not (
+            unresolved_conflicts or low_confidence or unassessed_categories or unresolved_not_found
+        ),
         unresolved_conflict_ids=unresolved_conflicts,
         low_confidence_categories=low_confidence,
+        unassessed_change_categories=unassessed_categories,
         unresolved_not_found_items=unresolved_not_found,
     )
 
@@ -66,6 +76,7 @@ def require_approval_allowed(result: ApprovalGateResult) -> None:
         blocked = (
             result.unresolved_conflict_ids
             + result.low_confidence_categories
+            + tuple(f"unassessed:{category}" for category in result.unassessed_change_categories)
             + result.unresolved_not_found_items
         )
         raise ApprovalBlockedError(f"Explicit review outcomes are required: {', '.join(blocked)}")
