@@ -1,1 +1,1 @@
-# Repository bootstrap
+Agentic SDLC drive through GitHub Copilot 
